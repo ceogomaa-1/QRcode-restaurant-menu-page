@@ -51,7 +51,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
-  const [appUrl, setAppUrl] = useState('')
+  // Always use the production URL for QR codes so they work when scanned on any phone.
+  // Priority: NEXT_PUBLIC_APP_URL (user-set) → NEXT_PUBLIC_VERCEL_URL (auto-set by Vercel) → current origin
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.NEXT_PUBLIC_VERCEL_URL ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}` : '') ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
 
   const [form, setForm] = useState({
     name: '',
@@ -65,7 +70,6 @@ export default function AdminPage() {
   const [useNewRestaurant, setUseNewRestaurant] = useState(false)
 
   useEffect(() => {
-    setAppUrl(window.location.origin)
     fetchData()
   }, [])
 
