@@ -1,5 +1,6 @@
 import { supabase, type Dish, type Restaurant } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
+import { headers } from 'next/headers'
 import { QRCodeSVG } from 'qrcode.react'
 import Link from 'next/link'
 
@@ -28,7 +29,10 @@ export default async function MenuPage({ params }: { params: { restaurantSlug: s
   if (!data) notFound()
 
   const { restaurant, dishes } = data
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  const h = await headers()
+  const host = h.get('host') ?? 'localhost:3000'
+  const proto = h.get('x-forwarded-proto') ?? 'http'
+  const appUrl = `${proto}://${host}`
 
   return (
     <div className="min-h-screen bg-gray-50">

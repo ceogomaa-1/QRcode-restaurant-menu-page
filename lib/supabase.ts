@@ -34,5 +34,6 @@ export type Dish = {
   price: number
   description: string
   glb_url: string
+  usdz_url?: string | null
   created_at: string
 }

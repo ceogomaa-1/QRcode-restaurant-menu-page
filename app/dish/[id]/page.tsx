@@ -23,6 +23,7 @@ export default async function DishPage({ params }: { params: { id: string } }) {
       <div className="flex-1 relative" style={{ minHeight: '65vh' }}>
         <model-viewer
           src={dish.glb_url}
+          {...(dish.usdz_url ? { 'ios-src': dish.usdz_url } : {})}
           ar
           ar-modes="webxr scene-viewer quick-look"
           camera-controls

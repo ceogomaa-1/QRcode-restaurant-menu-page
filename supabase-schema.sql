@@ -17,8 +17,12 @@ create table if not exists dishes (
   price numeric(10, 2) not null default 0,
   description text default '',
   glb_url text not null,
+  usdz_url text,
   created_at timestamptz default now() not null
 );
+
+-- Migration: add usdz_url to existing dishes table (safe to run if column already exists)
+alter table dishes add column if not exists usdz_url text;
 
 -- Indexes
 create index if not exists dishes_restaurant_id_idx on dishes(restaurant_id);

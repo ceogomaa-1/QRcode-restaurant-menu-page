@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
+    "@types/three": "^0.183.1",
     "next": "14.2.35",
     "qrcode.react": "^4.2.0",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "three": "^0.183.2"
   },
   "devDependencies": {
     "@types/node": "^20",
