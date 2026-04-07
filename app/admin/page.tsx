@@ -42,7 +42,9 @@ async function glbToUsdz(glbBuffer: ArrayBuffer): Promise<ArrayBuffer> {
     new GLTFLoader().parse(glbBuffer, '', resolve as (g: unknown) => void, reject)
   })
 
-  return await new USDZExporter().parseAsync(gltf.scene)
+  const usdz = await new USDZExporter().parseAsync(gltf.scene)
+  // Slice to get a plain ArrayBuffer (avoids Uint8Array<ArrayBufferLike> TS errors)
+  return usdz.buffer.slice(usdz.byteOffset, usdz.byteOffset + usdz.byteLength)
 }
 
 export default function AdminPage() {
