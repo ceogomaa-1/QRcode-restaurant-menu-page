@@ -5,15 +5,51 @@ import { supabase, type Dish, type Restaurant } from '@/lib/supabase'
 import { QRCodeCanvas } from 'qrcode.react'
 import Link from 'next/link'
 
-// Convert OBJ text → GLB ArrayBuffer using Three.js (browser-side)
-async function objToGlb(objText: string): Promise<ArrayBuffer> {
+// Convert OBJ (+ optional MTL + textures) → GLB ArrayBuffer using Three.js (browser-side)
+async function objToGlb(files: File[]): Promise<ArrayBuffer> {
   const THREE = await import('three')
   const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js')
+  const { MTLLoader } = await import('three/examples/jsm/loaders/MTLLoader.js')
   const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js')
 
-  const object = new OBJLoader().parse(objText)
+  const objFile = files.find(f => f.name.toLowerCase().endsWith('.obj'))!
+  const mtlFile = files.find(f => f.name.toLowerCase().endsWith('.mtl'))
+  const imageFiles = files.filter(f => /\.(png|jpe?g|webp|bmp)$/i.test(f.name))
 
-  // Center and normalise scale so the model looks reasonable in AR
+  // Build blob URL map for all texture images so the LoadingManager can resolve them
+  const blobUrls: Record<string, string> = {}
+  for (const img of imageFiles) {
+    blobUrls[img.name.toLowerCase()] = URL.createObjectURL(img)
+  }
+
+  // LoadingManager intercepts texture URL resolution → redirect filenames to blob URLs
+  const manager = new THREE.LoadingManager()
+  manager.setURLModifier((url) => {
+    const filename = url.split(/[/\\]/).pop()?.toLowerCase() ?? ''
+    return blobUrls[filename] ?? url
+  })
+
+  let object: import('three').Group
+
+  if (mtlFile) {
+    const mtlContent = await mtlFile.text()
+    const mtlLoader = new MTLLoader(manager)
+    const materials = mtlLoader.parse(mtlContent, '')
+
+    // Wait for all textures to finish loading (or 5 s timeout)
+    await Promise.race([
+      new Promise<void>(resolve => { manager.onLoad = resolve; materials.preload() }),
+      new Promise<void>(resolve => setTimeout(resolve, 5000)),
+    ])
+
+    const objLoader = new OBJLoader(manager)
+    objLoader.setMaterials(materials)
+    object = objLoader.parse(await objFile.text())
+  } else {
+    object = new OBJLoader().parse(await objFile.text())
+  }
+
+  // Centre and normalise scale
   const box = new THREE.Box3().setFromObject(object)
   const center = box.getCenter(new THREE.Vector3())
   const size = box.getSize(new THREE.Vector3())
@@ -23,14 +59,18 @@ async function objToGlb(objText: string): Promise<ArrayBuffer> {
   box.getCenter(center)
   object.position.sub(center)
 
-  return new Promise((resolve, reject) => {
+  const result = await new Promise<ArrayBuffer>((resolve, reject) => {
     new GLTFExporter().parse(
       object,
-      (result) => resolve(result instanceof ArrayBuffer ? result : new TextEncoder().encode(JSON.stringify(result)).buffer as ArrayBuffer),
+      (r) => resolve(r instanceof ArrayBuffer ? r : new TextEncoder().encode(JSON.stringify(r)).buffer as ArrayBuffer),
       reject,
       { binary: true }
     )
   })
+
+  // Clean up blob URLs
+  Object.values(blobUrls).forEach(URL.revokeObjectURL)
+  return result
 }
 
 // Convert GLB ArrayBuffer → USDZ ArrayBuffer using Three.js (browser-side)
@@ -68,7 +108,7 @@ export default function AdminPage() {
     newRestaurantName: '',
     newRestaurantSlug: '',
   })
-  const [modelFile, setModelFile] = useState<File | null>(null)
+  const [modelFiles, setModelFiles] = useState<File[]>([])
   const [useNewRestaurant, setUseNewRestaurant] = useState(false)
 
   useEffect(() => {
@@ -90,15 +130,12 @@ export default function AdminPage() {
     e.preventDefault()
     setSubmitStatus(null)
 
-    if (!modelFile) {
+    const primaryFile = modelFiles.find(f => /\.(glb|obj)$/i.test(f.name))
+    if (!primaryFile) {
       setSubmitStatus({ type: 'error', message: 'Please select a .glb or .obj file' })
       return
     }
-    const ext = modelFile.name.split('.').pop()?.toLowerCase()
-    if (!['glb', 'obj'].includes(ext ?? '')) {
-      setSubmitStatus({ type: 'error', message: 'File must be .glb or .obj' })
-      return
-    }
+    const ext = primaryFile.name.split('.').pop()?.toLowerCase()
 
     setSubmitting(true)
     try {
@@ -126,10 +163,10 @@ export default function AdminPage() {
       // --- Resolve GLB buffer ---
       let glbBuffer: ArrayBuffer
       if (ext === 'obj') {
-        setSubmitStatus({ type: 'success', message: 'Converting OBJ → GLB…' })
-        glbBuffer = await objToGlb(await modelFile.text())
+        setSubmitStatus({ type: 'success', message: 'Converting OBJ → GLB (loading textures)…' })
+        glbBuffer = await objToGlb(modelFiles)
       } else {
-        glbBuffer = await modelFile.arrayBuffer()
+        glbBuffer = await primaryFile.arrayBuffer()
       }
 
       // --- Generate USDZ for iOS ---
@@ -143,7 +180,7 @@ export default function AdminPage() {
       }
 
       // --- Upload GLB ---
-      const base = `${Date.now()}-${modelFile.name.replace(/\s+/g, '-').replace(/\.obj$/i, '.glb')}`
+      const base = `${Date.now()}-${primaryFile.name.replace(/\s+/g, '-').replace(/\.obj$/i, '.glb')}`
       setSubmitStatus({ type: 'success', message: 'Uploading 3D model…' })
       const { error: uploadError } = await supabase.storage
         .from('glb-models')
@@ -177,7 +214,7 @@ export default function AdminPage() {
 
       setSubmitStatus({ type: 'success', message: 'Dish uploaded successfully!' })
       setForm({ name: '', price: '', description: '', restaurantId: '', newRestaurantName: '', newRestaurantSlug: '' })
-      setModelFile(null)
+      setModelFiles([])
       setUseNewRestaurant(false)
       await fetchData()
     } catch (err: unknown) {
@@ -308,24 +345,32 @@ export default function AdminPage() {
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-orange-400 transition-colors">
                     <input
                       type="file"
-                      accept=".glb,.obj"
-                      onChange={e => setModelFile(e.target.files?.[0] || null)}
+                      accept=".glb,.obj,.mtl,.png,.jpg,.jpeg,.webp"
+                      multiple
+                      onChange={e => setModelFiles(Array.from(e.target.files || []))}
                       className="hidden"
                       id="model-upload"
                     />
                     <label htmlFor="model-upload" className="cursor-pointer">
-                      {modelFile ? (
-                        <span className="text-sm text-orange-600 font-medium">{modelFile.name}</span>
+                      {modelFiles.length > 0 ? (
+                        <span className="text-sm text-orange-600 font-medium">
+                          {modelFiles.map(f => f.name).join(', ')}
+                        </span>
                       ) : (
-                        <span className="text-sm text-gray-500">Click to upload .glb or .obj</span>
+                        <span className="text-sm text-gray-500">Click to upload files</span>
                       )}
                     </label>
                   </div>
-                  {modelFile?.name.endsWith('.obj') && (
-                    <p className="text-xs text-blue-500 mt-1">OBJ will be auto-converted to GLB + USDZ for iOS AR</p>
-                  )}
-                  {modelFile?.name.endsWith('.glb') && (
+                  {modelFiles.some(f => f.name.toLowerCase().endsWith('.obj')) ? (
+                    <p className="text-xs text-blue-500 mt-1">
+                      OBJ detected — also select the .mtl + texture images for colors
+                    </p>
+                  ) : modelFiles.some(f => f.name.toLowerCase().endsWith('.glb')) ? (
                     <p className="text-xs text-blue-500 mt-1">GLB will be auto-converted to USDZ for iOS AR</p>
+                  ) : (
+                    <p className="text-xs text-gray-400 mt-1">
+                      GLB (textures included) or OBJ + .mtl + texture images
+                    </p>
                   )}
                 </div>
 
